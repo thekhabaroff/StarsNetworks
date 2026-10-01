@@ -1,0 +1,118 @@
+name: starsnetworks
+
+services:
+  db:
+    container_name: starsnetworks-db
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - database
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: starsnetworks-bot:latest
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      BOT_TOKEN: migration-placeholder
+      BOT_USERNAME: migration
+      ADMIN_IDS: "0"
+      DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER:?POSTGRES_USER is required}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@db:5432/${POSTGRES_DB:?POSTGRES_DB is required}"
+      STARS_PRODUCT_PRICE_RUBLES: ${STARS_PRODUCT_PRICE_RUBLES:-1.50}
+    command: ["alembic", "-c", "config.ini", "upgrade", "head"]
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777,noexec,nosuid,size=64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - database
+
+  db-init:
+    image: postgres:16-alpine
+    restart: "no"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      PGHOST: db
+      PGPORT: "5432"
+      PGDATABASE: ${POSTGRES_DB:?POSTGRES_DB is required}
+      PGUSER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      APP_DB_USER: ${POSTGRES_APP_USER:?POSTGRES_APP_USER is required}
+      APP_DB_PASSWORD: ${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}
+    volumes:
+      - ./database/bootstrap_app_role.sh:/bootstrap/bootstrap_app_role.sh:ro
+    entrypoint: ["/bin/sh", "/bootstrap/bootstrap_app_role.sh"]
+    networks:
+      - database
+
+  bot:
+    container_name: starsnetworks
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: starsnetworks-bot:latest
+    restart: unless-stopped
+    init: true
+    env_file:
+      - .env
+    environment:
+      PAYMENT_WEBHOOK_PORT: ${PAYMENT_WEBHOOK_PORT:-18743}
+      ENV_FILE_PATH: /app/.env
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      STARS_PRODUCT_PRICE_RUBLES: ${STARS_PRODUCT_PRICE_RUBLES:-1.50}
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:${PAYMENT_WEBHOOK_PORT:-18743}:${PAYMENT_WEBHOOK_PORT:-18743}"
+    read_only: true
+    volumes:
+      - starsnetworks_data:/data
+    tmpfs:
+      - /tmp:mode=1777,noexec,nosuid,size=64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    stop_grace_period: 30s
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "5"
+    networks:
+      - database
+      - egress
+
+volumes:
+  postgres_data:
+    name: starsnetworks_postgres_data
+  starsnetworks_data:
+    name: starsnetworks_data
+
+networks:
+  database:
+    internal: true
+  egress:
