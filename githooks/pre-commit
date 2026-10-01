@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+
+# Never allow a populated runtime environment to be committed.
+if ! git diff --cached --name-only --diff-filter=ACM | grep -Fxq '.env'; then
+    exit 0
+fi
+
+if git show :.env | grep -Eq '^(BOT_TOKEN|POSTGRES_PASSWORD|POSTGRES_APP_PASSWORD|FRAGMENT_CONNECTION_TOKEN|TELEGRAM_WEBHOOK_SECRET_TOKEN|CRYPTOBOT_API_TOKEN)=.+$'; then
+    echo 'ОШИБКА: заполненный .env нельзя коммитить. Удалите секреты из staged-файла.' >&2
+    exit 1
+fi
