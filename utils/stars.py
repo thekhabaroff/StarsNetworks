@@ -15,7 +15,11 @@ logger = logging.getLogger(__name__)
 
 
 class FragmentError(RuntimeError):
-    """A safe, user-independent error returned by Fragment."""
+    """Fragment error with an explicit indication whether retry is safe."""
+
+    def __init__(self, message: str, *, outcome_unknown: bool = False):
+        super().__init__(message)
+        self.outcome_unknown = outcome_unknown
 
 
 def _token_path() -> Path:
@@ -62,14 +66,27 @@ async def _json_request(
                     data = {"detail": body[:500]}
                 if response.status >= 400:
                     detail = data.get("detail") or data.get("message") or body[:300]
-                    raise FragmentError(f"Fragment HTTP {response.status}: {detail}")
+                    # A gateway/server timeout or error may arrive after the
+                    # purchase was accepted upstream. Never allow an automatic
+                    # retry unless Fragment has clearly rejected the request.
+                    outcome_unknown = response.status in {408, 409} or response.status >= 500
+                    raise FragmentError(
+                        f"Fragment HTTP {response.status}: {detail}",
+                        outcome_unknown=outcome_unknown,
+                    )
                 if not isinstance(data, dict):
-                    raise FragmentError("Fragment returned an invalid response")
+                    raise FragmentError(
+                        "Fragment returned an invalid response",
+                        outcome_unknown=True,
+                    )
                 return data
     except asyncio.TimeoutError as exc:
-        raise FragmentError("Fragment request timed out") from exc
+        raise FragmentError("Fragment request timed out", outcome_unknown=True) from exc
     except aiohttp.ClientError as exc:
-        raise FragmentError(f"Fragment network error: {exc}") from exc
+        raise FragmentError(
+            f"Fragment network error: {exc}",
+            outcome_unknown=True,
+        ) from exc
 
 
 async def send_stars(target_username: str, quantity: int) -> None:
@@ -98,7 +115,8 @@ async def send_stars(target_username: str, quantity: int) -> None:
         if "401" in str(exc) or "403" in str(exc):
             raise FragmentError(
                 "Fragment connection token was rejected; recreate the connection "
-                "in the Fragment dashboard"
+                "in the Fragment dashboard",
+                outcome_unknown=exc.outcome_unknown,
             ) from exc
         raise
     logger.info("Sent %s Telegram Stars to @%s", quantity, username)
@@ -130,7 +148,8 @@ async def send_premium(target_username: str, months: int) -> None:
         if "401" in str(exc) or "403" in str(exc):
             raise FragmentError(
                 "Fragment connection token was rejected; recreate the connection "
-                "in the Fragment dashboard"
+                "in the Fragment dashboard",
+                outcome_unknown=exc.outcome_unknown,
             ) from exc
         raise
     logger.info("Sent %s months Telegram Premium to @%s", months, username)

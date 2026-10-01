@@ -230,6 +230,7 @@ class Order(Base):
     fulfillment_status = Column(String(20), default="PENDING", nullable=False)
     fulfillment_attempts = Column(Integer, default=0, nullable=False)
     fulfillment_error = Column(Text, nullable=True)
+    fulfillment_started_at = Column(DateTime, nullable=True)
     delivered_at = Column(DateTime, nullable=True)
 
     # Relationships

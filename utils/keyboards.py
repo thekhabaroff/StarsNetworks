@@ -257,12 +257,17 @@ def get_order_detail_keyboard(
             callback_data=f"cancel_order_{order_id}"
         )])
     elif status == "ВЫПОЛНЕНО":
-        if fulfillment_status in {"FAILED", "SENDING"}:
+        if fulfillment_status == "FAILED":
             buttons.append([InlineKeyboardButton(
                 text="🔁 Повторить отправку",
                 callback_data=f"retry_delivery_{order_id}",
             )])
-        else:
+        elif fulfillment_status == "SENDING":
+            buttons.append([InlineKeyboardButton(
+                text="🔎 Проверить статус отправки",
+                callback_data=f"retry_delivery_{order_id}",
+            )])
+        elif fulfillment_status not in {"PENDING", "SENDING", "UNKNOWN"}:
             buttons.append([InlineKeyboardButton(
                 text="📥 Скачать товар",
                 callback_data=f"download_{order_id}"

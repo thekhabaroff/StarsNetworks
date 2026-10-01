@@ -178,10 +178,21 @@ async def show_order_detail(callback: CallbackQuery, session: AsyncSession):
 
     if product and is_virtual_product(product):
         recipient_icon = "💎" if is_premium_product(product) else "⭐"
+        fulfillment_label = {
+            "PENDING": "Ожидает отправки",
+            "SENDING": "Отправляется",
+            "UNKNOWN": "Требуется проверка",
+            "FAILED": "Не отправлен — можно повторить",
+            "SENT": "Отправлен",
+        }.get(order.fulfillment_status, order.fulfillment_status)
         text += f"{recipient_icon} Получатель: @{escape(order.target_username or 'не указан')}\n"
-        text += f"📤 Отправка: {escape(getattr(order, 'fulfillment_status', 'PENDING'))}\n"
-        if getattr(order, "fulfillment_error", None):
-            text += "⚠️ Последняя попытка не удалась — можно повторить.\n"
+        text += f"📤 Отправка: {escape(fulfillment_label)}\n"
+        if order.fulfillment_status == "UNKNOWN":
+            text += "⚠️ Результат Fragment не подтверждён. Не повторяйте заказ — поддержка проверит отправку.\n"
+        elif order.fulfillment_status == "SENDING":
+            text += "⏳ Отправка выполняется. Повтор пока недоступен.\n"
+        elif order.fulfillment_status == "FAILED":
+            text += "⚠️ Fragment отклонил последнюю попытку — её можно безопасно повторить.\n"
 
     if order.payment_method:
         text += f"💳 Способ оплаты: {order.payment_method}\n"
@@ -323,14 +334,26 @@ async def download_order(callback: CallbackQuery, session: AsyncSession):
                 show_alert=True,
             )
             return
-        await deliver_completed_order(
+        if order.fulfillment_status == "UNKNOWN":
+            await callback.answer(
+                "Результат Fragment не подтверждён. Повтор заблокирован — обратитесь в поддержку.",
+                show_alert=True,
+            )
+            return
+        ok = await deliver_completed_order(
             callback.bot,
             CompletedOrder(order=order, accounts=[], already_completed=True),
         )
-        await callback.answer(
-            "✅ Отправка запущена" if order.fulfillment_status != "FAILED" else "⚠️ Fragment пока недоступен",
-            show_alert=True,
-        )
+        await session.refresh(order)
+        if ok:
+            answer = "✅ Отправка подтверждена"
+        elif order.fulfillment_status == "UNKNOWN":
+            answer = "Результат не подтверждён. Повтор заблокирован — обратитесь в поддержку."
+        elif order.fulfillment_status == "SENDING":
+            answer = "Отправка уже выполняется; повторный запрос не отправлен."
+        else:
+            answer = "Fragment отклонил отправку. Повтор доступен в карточке заказа."
+        await callback.answer(answer, show_alert=True)
         return
 
     try:
@@ -388,12 +411,26 @@ async def retry_stars_delivery(callback: CallbackQuery, session: AsyncSession):
     if not product or not is_virtual_product(product):
         await callback.answer("Повторная отправка доступна только для Stars и Premium", show_alert=True)
         return
+    if order.fulfillment_status == "UNKNOWN":
+        await callback.answer(
+            "Результат Fragment не подтверждён. Повтор заблокирован во избежание двойного списания; обратитесь в поддержку.",
+            show_alert=True,
+        )
+        return
+    if order.fulfillment_status not in {"FAILED", "SENDING"}:
+        await callback.answer("Действие недоступно для текущего статуса отправки", show_alert=True)
+        return
     ok = await deliver_completed_order(
         callback.bot,
         CompletedOrder(order=order, accounts=[], already_completed=True),
     )
-    await callback.answer(
-        ("✅ Premium отправлен" if is_premium_product(product) else "✅ Stars отправлены")
-        if ok else "⚠️ Fragment пока недоступен",
-        show_alert=True,
-    )
+    await session.refresh(order)
+    if ok:
+        answer = "✅ Premium отправлен" if is_premium_product(product) else "✅ Stars отправлены"
+    elif order.fulfillment_status == "UNKNOWN":
+        answer = "Результат не подтверждён. Повтор заблокирован — обратитесь в поддержку."
+    elif order.fulfillment_status == "SENDING":
+        answer = "Отправка уже выполняется; повторный запрос не отправлен."
+    else:
+        answer = "Fragment отклонил отправку. Её можно повторить позже из заказа."
+    await callback.answer(answer, show_alert=True)

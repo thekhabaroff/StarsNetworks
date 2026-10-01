@@ -228,6 +228,13 @@ async def admin_order_detail(callback: CallbackQuery, session: AsyncSession):
     text += f"💰 Сумма: {order.total_amount:.2f} ₽\n"
     text += f"📋 Статус: {order.status}\n"
 
+    if product and is_virtual_product(product):
+        text += f"📤 Отправка Fragment: {escape(order.fulfillment_status)}\n"
+        if order.fulfillment_status == "UNKNOWN":
+            text += "⚠️ Результат не подтверждён — повтор запрещён до ручной сверки в Fragment.\n"
+        if order.fulfillment_error:
+            text += f"⚠️ Причина: {escape(order.fulfillment_error[:500])}\n"
+
     if order.payment_method:
         text += f"💳 Способ оплаты: {order.payment_method}\n"
 
@@ -323,5 +330,4 @@ CATALOG_LEVELS = {
         "new_title": "Новый тип", "added": "Тип добавлен",
     },
 }
-
 
