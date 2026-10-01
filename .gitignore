@@ -1,0 +1,13 @@
+.env
+*.db
+auth_token.json
+exports/
+temp_exports/
+data/
+__pycache__/
+*.pyc
+.venv/
+.venv-*/
+._*
+.DS_Store
+*.xlsx
